@@ -1,6 +1,14 @@
 #!/usr/bin/perl
 
 # Store the contents of an audit log into an SQLite database.
+# Each audit log entry is loaded as a row into a table named 'audit'.
+#
+# Usage:
+#    hdfs-audit-parser [--db dbFile] audit-log-file
+#
+# If no dbFile is specified, a new one is generated. 
+# If the dbFile exists then records from the log file are added to it.
+#
 
 use strict;
 use warnings;
@@ -14,22 +22,33 @@ my @known_columns = qw(time allowed ugi ip cmd options
                      src dst perm proto);
 
 sub usage {
-  printf "  Import an HDFS audit log file into a sqlite database\n";
-  printf "    Usage: hdfs-audit-parser log-file>\n";
-  exit;
+  printf qq(Import an HDFS audit log file into a sqlite database
+Usage:
+  hdfs-audit-parser [--db dbFile] audit-log-file
+    If no dbFile is specified, a new one is generated.
+    If dbFile exists then records from audit-log-file are added to it
+);
 }
 
-sub make_db($) {
-  my $db_file = shift;
-  my $dbh = DBI->connect(
-    "dbi:SQLite:dbname=$db_file", "", "",
-    {AutoCommit=>0, RaiseError=>1}) or die $DBI::errstr;
-  print " >> Opened Database $db_file\n";
+# Create a new SQLite database and a table named 'audit' that has
+# one column for each entry in @known_columns.
+sub create_new_db($) {  
+  my $dbh = connect_db($_[0]);
+  create_table($dbh);
+  printf " >> Created database $_[0]\n";
   return $dbh;
 }
 
+# Connect to a new or existing SQLite database file.
+#
+sub connect_db($) {
+  return DBI->connect(
+    "dbi:SQLite:dbname=$_[0]", "", "",
+    {AutoCommit=>0, RaiseError=>1}) or die $DBI::errstr;
+}
+
 sub create_table($) {
-  my $dbh = shift;
+  my $dbh = $_[0];
   my $sql =
      "CREATE TABLE $table_name(" . 
      join(" TEXT, ", @known_columns) . " TEXT)";
@@ -37,17 +56,17 @@ sub create_table($) {
   $dbh->commit;
 }
 
+# Load each line from the given audit log file as a record.
 sub load_records($;$) {
-  my $audit = shift;
-  my $dbh = shift;
+  my ($audit, $dbh) = ($_[0], $_[1]);
   open my $fhandle, "<$audit" or die "Failed to open $audit: $!";
   my $records = 0;
   
   # Parse each line and insert a record into the 'audit' table.
+  #
   while (<$fhandle>) {
     load_record($dbh, $_);
-    ++$records;
-    if ($records % 100000 == 0) {
+    if (++$records % 1_000_000 == 0) {
       print " >> Imported $records records\n";
     }
   }
@@ -56,28 +75,31 @@ sub load_records($;$) {
   close $fhandle;
 }
 
+# Parse a single audit log entry and insert it into the 'audit' table
+# in the given database.
+#
 sub load_record($;$) {
-  my $dbh = shift;
-  my $line = shift;
-  my @tokens = split /\s+/;   #TODO: Handle file names with spaces.
+  my ($dbh, $line) = ($_[0], $_[1]);
+  my @tokens = split /\s+/, $line;   #TODO: Handle file names with spaces.
   my $time = join(" ", splice(@tokens, 0, 2));
   $time =~ s/,.*$//;          # Drop the milliseconds.
   my @columns = ("time");
   my @values = ("\"$time\"");
 
   # Parse each remaining token as a 'key=value' pair.
+  #
   foreach my $field (@tokens) {
+    # Skip fields not in 'key=value' format or if the column is unknown.
     # Non-greedy regex match as fields may include '='
+    #
     if ($field =~ m/^(.*?)=(.*)$/ && $1 ~~ @known_columns) {
       push @columns, $1;
       push @values, "\"$2\"";
-    } else {
-      # Not a key=value entry, skip it.
-      next;
     }
   }
 
   # Insert the record into the table.
+  #
   my $sql = sprintf("INSERT INTO $table_name (%s) VALUES (%s)",
               join(',', @columns), join(',', @values));
   $dbh->prepare($sql)->execute();
@@ -85,21 +107,36 @@ sub load_record($;$) {
 
 # Main ------------------------------------------------------------------
 
-if (scalar @ARGV != 1) {
+my $dbh;
+my $db_file;
+if ((scalar @ARGV != 1 && scalar @ARGV != 3) ||
+    (scalar @ARGV > 1 && $ARGV[0] !~ m/^--./)) {
   usage();
   exit;
 }
 
+while (scalar @ARGV > 0 && $ARGV[0] =~ m/^--./) {
+  if ($ARGV[0] eq "--db" || $ARGV[0] eq "-n") {
+    shift @ARGV;
+    $db_file = shift @ARGV;
+  }
+}
 my $audit_log = shift @ARGV;
-my $db_file;
-do {
-  $db_file = "/tmp/audit-" . int(rand(10000000)) . ".db";
-} while (-f $db_file);
 
-my $dbh = make_db($db_file);
-create_table($dbh);
+if (!defined($db_file)) {
+  do {
+    $db_file = "/tmp/audit-" . int(rand(10_000_000)) . ".db";
+  } while (-f $db_file);
+}
+
+if (! -f $db_file) {
+  # Create the Database.
+  $dbh = create_new_db($db_file);
+} else {
+  $dbh = connect_db($db_file);
+}
+
 load_records($audit_log, $dbh);
-
 $dbh->commit;
 $dbh->disconnect;
 
