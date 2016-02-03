@@ -12,6 +12,7 @@
 
 use strict;
 use warnings;
+no warnings 'experimental'; # For smartmatch.
 
 use DBI;
 
@@ -58,7 +59,7 @@ sub create_table($) {
 
 # Load each line from the given audit log file as a record.
 sub load_records($;$) {
-  my ($audit, $dbh) = ($_[0], $_[1]);
+  my ($audit, $dbh) = @_[0 .. 1];
   open my $fhandle, "<$audit" or die "Failed to open $audit: $!";
   my $records = 0;
   
@@ -79,7 +80,7 @@ sub load_records($;$) {
 # in the given database.
 #
 sub load_record($;$) {
-  my ($dbh, $line) = ($_[0], $_[1]);
+  my ($dbh, $line) = @_[0 .. 1];
   my @tokens = split /\s+/, $line;   #TODO: Handle file names with spaces.
   my $time = join(" ", splice(@tokens, 0, 2));
   $time =~ s/,.*$//;          # Drop the milliseconds.
