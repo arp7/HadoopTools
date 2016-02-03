@@ -1,0 +1,105 @@
+#!/usr/bin/perl
+
+# Store the contents of an audit log into an SQLite database.
+
+use strict;
+use warnings;
+
+use DBI;
+
+# Functions -------------------------------------------------------------
+
+my $table_name = "audit";
+my @known_columns = qw(time allowed ugi ip cmd options
+                     src dst perm proto);
+
+sub usage {
+  printf "  Import an HDFS audit log file into a sqlite database\n";
+  printf "    Usage: hdfs-audit-parser log-file>\n";
+  exit;
+}
+
+sub make_db($) {
+  my $db_file = shift;
+  my $dbh = DBI->connect(
+    "dbi:SQLite:dbname=$db_file", "", "",
+    {AutoCommit=>0, RaiseError=>1}) or die $DBI::errstr;
+  print " >> Opened Database $db_file\n";
+  return $dbh;
+}
+
+sub create_table($) {
+  my $dbh = shift;
+  my $sql =
+     "CREATE TABLE $table_name(" . 
+     join(" TEXT, ", @known_columns) . " TEXT)";
+  $dbh->prepare($sql)->execute();
+  $dbh->commit;
+}
+
+sub load_records($;$) {
+  my $audit = shift;
+  my $dbh = shift;
+  open my $fhandle, "<$audit" or die "Failed to open $audit: $!";
+  my $records = 0;
+  
+  # Parse each line and insert a record into the 'audit' table.
+  while (<$fhandle>) {
+    load_record($dbh, $_);
+    ++$records;
+    if ($records % 100000 == 0) {
+      print " >> Imported $records records\n";
+    }
+  }
+
+  print " >> Imported $records total records\n";
+  close $fhandle;
+}
+
+sub load_record($;$) {
+  my $dbh = shift;
+  my $line = shift;
+  my @tokens = split /\s+/;   #TODO: Handle file names with spaces.
+  my $time = join(" ", splice(@tokens, 0, 2));
+  $time =~ s/,.*$//;          # Drop the milliseconds.
+  my @columns = ("time");
+  my @values = ("\"$time\"");
+
+  # Parse each remaining token as a 'key=value' pair.
+  foreach my $field (@tokens) {
+    # Non-greedy regex match as fields may include '='
+    if ($field =~ m/^(.*?)=(.*)$/ && $1 ~~ @known_columns) {
+      push @columns, $1;
+      push @values, "\"$2\"";
+    } else {
+      # Not a key=value entry, skip it.
+      next;
+    }
+  }
+
+  # Insert the record into the table.
+  my $sql = sprintf("INSERT INTO $table_name (%s) VALUES (%s)",
+              join(',', @columns), join(',', @values));
+  $dbh->prepare($sql)->execute();
+}
+
+# Main ------------------------------------------------------------------
+
+if (scalar @ARGV != 1) {
+  usage();
+  exit;
+}
+
+my $audit_log = shift @ARGV;
+my $db_file;
+do {
+  $db_file = "/tmp/audit-" . int(rand(10000000)) . ".db";
+} while (-f $db_file);
+
+my $dbh = make_db($db_file);
+create_table($dbh);
+load_records($audit_log, $dbh);
+
+$dbh->commit;
+$dbh->disconnect;
+
