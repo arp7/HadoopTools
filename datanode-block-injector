@@ -122,9 +122,8 @@ my $blocks_per_storage = $num_blocks / (scalar @storages);
 
 verify_storage_dirs(\@storages, $bpid);
 foreach (@storages) {
-  my $finalized = get_bp_finalized_dir($_, $bpid);
-  create_blocks($finalized, $blocks_per_storage, $start_blockid,
-      $genstamp, $blockfile, $metafile);
+  create_blocks(get_bp_finalized_dir($_, $bpid), $blocks_per_storage,
+      $start_blockid, $genstamp, $blockfile, $metafile);
   $start_blockid += $blocks_per_storage;
 }
 
@@ -132,5 +131,5 @@ foreach (@storages) {
 # the remainder on the first storage directory.
 #
 my $remaining = $num_blocks % (scalar @storages);
-($remaining > 0) && create_blocks($storages[0], $remaining, $start_blockid,
-    $genstamp, $blockfile, $metafile);
+($remaining > 0) && create_blocks(get_bp_finalized_dir($storages[0], $bpid),
+    $remaining, $start_blockid, $genstamp, $blockfile, $metafile);
