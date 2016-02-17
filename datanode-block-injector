@@ -1,0 +1,136 @@
+#!/usr/bin/perl
+
+# Inject blocks into a DataNode storage directory. Works with the 
+# BLOCKID_BASED_LAYOUT (layout version -56). See usage for details.
+#
+#
+
+use strict;
+use warnings;
+
+use File::Copy;
+use File::Path qw(make_path);
+use File::Spec qw(catfile);
+use Getopt::Long 2.32;
+use Pod::Usage;
+
+# Functions -------------------------------------------------------------
+
+sub usage() {
+  print qq(
+Usage:
+  datanode-block-injector --bpid <bpid> --numblocks <num-blocks>
+      --startblockid <starting-block-id> --storagedirs <dir1;dir2;...;dirN>
+      --blockfile <template-block-file> --metafile <template-meta-file>
+      [--genstamp <genstamp>]
+
+  The default genstamp is 1000. All other parameters are required.
+
+  Template block and meta files can be generated from an existing cluster.
+  There is no blocklength parameter as the block length will be the same as
+  the size of the template-block-file.
+);
+  exit(1);
+}
+
+# Ensure that each storage dir is initialized and its layout version is
+# as expected.
+# VERSION file parsing snippet copied from http://stackoverflow.com/a/11844903
+#
+sub verify_storage_dirs($;$) {
+  my @storages = @{$_[0]};
+  my $bpid = $_[1];
+  foreach (@storages) {
+    my $version_file = get_bp_version_file($_, $bpid);
+    open my $fh, '<', $version_file or
+        die "Unable to open $version_file file: $!\n";
+    print " >> Reading VERSION file $version_file\n";
+    my %kvs = map { split /=|\s+/; } <$fh>;
+    close $fh;
+    (exists $kvs{"layoutVersion"} && $kvs{"layoutVersion"} eq "-56") or
+        die " >> Layout version not found in $version_file or incorrect.\n";
+  }
+}
+
+# Given a storage directory root and a block pool ID get the path to
+# to the block pool VERSION file.
+#
+sub get_bp_version_file($;$) {
+  my ($storage, $bpid) = @_[0 .. 1];
+  return File::Spec->catfile(
+      $storage, "current", "BP-$bpid", "current", "VERSION");
+}
+
+# Given a storage directory root and a block pool ID get the path to
+# to the block pool finalized directory.
+#
+sub get_bp_finalized_dir($;$) {
+  my ($storage, $bpid) = @_[0 .. 1];
+  return File::Spec->catfile(
+      $storage, "current", "BP-$bpid", "current", "finalized");
+}
+
+sub create_blocks($;$;$;$;$;$) {
+  my ($finalized, $num_blocks, $start_blockid, $genstamp, $blockfile,
+      $metafile) = @_[0 .. 5];
+
+  print " >> Creating $num_blocks files in $finalized\n";
+  for my $blockid ($start_blockid .. ($start_blockid + $num_blocks - 1)) {
+    my $blockfile_name = "blk_" . $blockid;
+    my $metafile_name = $blockfile_name . "_" . $genstamp . ".meta";
+
+    # Calculate the target directory which is based on the block ID.
+    # See DataNodeUtil#idToBlockDir in the HDFS source tree.
+    #
+    my $subdir1 = "subdir" . (($blockid >> 16) & 0xff);
+    my $subdir2 = "subdir" . (($blockid >> 8) & 0xff);
+    my $target_dir = File::Spec->catfile($finalized, $subdir1, $subdir2);
+    make_path($target_dir);
+    copy($blockfile, File::Spec->catfile($target_dir, $blockfile_name)) or
+        die "Failed to copy block file to $target_dir: $!";
+    copy($metafile, File::Spec->catfile($target_dir, $metafile_name)) or
+        die "Failed to meta block file to $target_dir: $!";
+  }
+}
+
+
+# Main ------------------------------------------------------------------
+
+my $genstamp = 1000;         # Same as CreateEditsLog.
+my $bpid;
+my $num_blocks;
+my $storage_dirs;
+my $blockfile;
+my $metafile;
+my $start_blockid;
+
+GetOptions('bpid=s' => \$bpid,
+           'numblocks=i' => \$num_blocks,
+           'startblockid=i' => \$start_blockid,
+           'genstamp=i' => \$genstamp,
+           'storagedirs=s' => \$storage_dirs,
+           'blockfile=s' => \$blockfile,
+           'metafile=s' => \$metafile);
+
+if (!defined($bpid) || !defined($num_blocks) || !defined($storage_dirs) ||
+    !defined($blockfile) || !defined($metafile) || !defined($start_blockid)) {
+  usage();
+}
+
+my @storages = split(';', $storage_dirs);
+my $blocks_per_storage = $num_blocks / (scalar @storages);
+
+verify_storage_dirs(\@storages, $bpid);
+foreach (@storages) {
+  my $finalized = get_bp_finalized_dir($_, $bpid);
+  create_blocks($finalized, $blocks_per_storage, $start_blockid,
+      $genstamp, $blockfile, $metafile);
+  $start_blockid += $blocks_per_storage;
+}
+
+# If $num_blocks is not an exact multiple of the number of storages, create
+# the remainder on the first storage directory.
+#
+my $remaining = $num_blocks % (scalar @storages);
+($remaining > 0) && create_blocks($storages[0], $remaining, $start_blockid,
+    $genstamp, $blockfile, $metafile);
