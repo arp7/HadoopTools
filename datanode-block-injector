@@ -58,7 +58,7 @@ sub verify_storage_dirs($;$) {
 sub get_bp_version_file($;$) {
   my ($storage, $bpid) = @_[0 .. 1];
   return File::Spec->catfile(
-      $storage, "current", "BP-$bpid", "current", "VERSION");
+      $storage, "current", $bpid, "current", "VERSION");
 }
 
 # Given a storage directory root and a block pool ID get the path to
@@ -67,7 +67,7 @@ sub get_bp_version_file($;$) {
 sub get_bp_finalized_dir($;$) {
   my ($storage, $bpid) = @_[0 .. 1];
   return File::Spec->catfile(
-      $storage, "current", "BP-$bpid", "current", "finalized");
+      $storage, "current", $bpid, "current", "finalized");
 }
 
 sub create_blocks($;$;$;$;$;$) {
