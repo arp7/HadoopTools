@@ -1,0 +1,144 @@
+#!/usr/bin/perl
+
+# A script to automate some of the drudgery of injecting files and blocks into
+# the NameNode using the CreateEditsLog utility. See usage for details.
+#
+
+use strict;
+use warnings;
+
+use File::Copy;
+use File::Path qw(rmtree);
+use File::Spec qw(catfile);
+use File::Temp qw(tempdir);
+use Getopt::Long;
+use IPC::Run3;
+
+# -----Functions----------------------------------------------------------------
+
+sub usage() {
+  print qq(
+Usage:
+  namenode-file-injector --numfiles <num-files> --blocksperfile=<blocks-per-file>
+      --startblockid <starting-block-id> --blocklength=<block-length>
+
+  Default blocksperfile is 1.
+  Default startblockid is 1.
+  Default blocklength is 10 bytes.
+
+);
+  exit(1);
+}
+
+sub get_hadoop_command() {
+  return File::Spec->catfile($ENV{'HADOOP_PREFIX'}, "bin", "hadoop");
+}
+
+sub get_hdfs_command() {
+  return File::Spec->catfile($ENV{'HADOOP_PREFIX'}, "bin", "hdfs");
+}
+
+sub get_daemon_command() {
+  return File::Spec->catfile(
+      $ENV{'HADOOP_PREFIX'}, "sbin", "hadoop-daemon.sh");
+}
+
+sub get_meta_dir() {
+  my $metadir;
+  run3([get_hdfs_command(), "getconf", "-confKey",
+        "dfs.namenode.name.dir"], \undef, \$metadir);
+  ($? >> 8 != 0) && die "Failed to get dfs.name.dir\n";
+  $metadir =~ s/^file:\/\///;
+  print " >> Got NameNode metadir $metadir";
+  chomp($metadir);
+  return $metadir;
+}
+
+# Formats the NameNode and returns the generated BlockPoolId.
+#
+sub formatnn() {
+  my $metadir = get_meta_dir();
+  if (-d $metadir) {
+    rmtree($metadir) or die "Failed to delete $metadir\n";
+    print " >> $metadir\n";
+  } else {
+    print " >> No $metadir exists\n";
+  }
+  my @output = ();
+  run3([get_hdfs_command(), "namenode", "-format"], undef, \@output, \@output);
+  ($? >> 8 != 0) && die "Failed to format NameNode";
+  foreach (@output) {
+    if ($_ =~ /^.*Allocated new BlockPoolId: (.*)$/) {
+      return $1;
+    }
+  }
+}
+
+sub start_server($) {
+  my $service = $_[0];
+  print " >> Starting $service\n";
+  system(get_daemon_command(), "--config", $ENV{'HADOOP_CONF_DIR'},
+         "start", $service) and -die "Failed to start $service\n";
+}
+
+sub stop_server($) {
+  my $service = $_[0];
+  system(get_daemon_command(), "--config", $ENV{'HADOOP_CONF_DIR'},
+         "stop", $service) and -die "Failed to stop $service\n";
+}
+
+sub create_edit_logs($;$;$;$;$) {
+  my ($num_files, $blocks_per_file, $start_blockid,
+      $block_length, $edits_dir) = @_[0 .. 4];
+  print " >> Generating edit logs to $edits_dir\n";
+  run3([get_hadoop_command(),
+    "org.apache.hadoop.hdfs.server.namenode.CreateEditsLog",
+    "-d", $edits_dir, "-f", $num_files, $start_blockid, $blocks_per_file,
+    "-l", $block_length]);
+  ($? >> 8 != 0) && die "Failed to generate edit logs with CreateEditsLog\n";
+}
+
+# Copy generated edit logs to the NameNode's metadata directory.
+# Delete the old edits_inprogress.. file.
+#
+sub copy_edit_logs($) {
+  my $edits_dir = $_[0];
+  my $output_dir = File::Spec->catfile(get_meta_dir(), "current");
+
+  foreach (glob(File::Spec->catfile($edits_dir, "*"))) {
+    print " >> Copying $_ to $output_dir\n";
+    copy($_, $output_dir);
+  }
+
+  my $old_edits_file = File::Spec->catfile($output_dir,
+      "edits_inprogress_0000000000000000001");
+  unlink($old_edits_file) or die
+      "Failed to remove $old_edits_file: $!\n";  
+}
+
+# -----Execution begins here-----------------------------------------------------
+
+if (!defined $ENV{'HADOOP_PREFIX'} || !defined $ENV{'HADOOP_CONF_DIR'}) {
+  die "HADOOP_PREFIX and HADOOP_CONF_DIR must be defined";
+}
+
+my $num_files;
+my $blocks_per_file = 1;
+my $start_blockid = 1;
+my $block_length = 10;
+
+GetOptions('numfiles=i' => \$num_files,
+           'blocksperfile=i' => \$blocks_per_file,
+           'startblockid=i' => \$start_blockid,
+           'blocklength=i' => \$block_length);
+
+(!defined($num_files)) && usage();
+
+my $bpid = formatnn();
+start_server("namenode") && sleep 10;
+stop_server("namenode") && sleep 5;
+my $edits_dir = tempdir(CLEANUP => 0);
+create_edit_logs($num_files, $blocks_per_file, $start_blockid,
+    $block_length, $edits_dir);
+copy_edit_logs($edits_dir);
+start_server("namenode");
