@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 # Store the contents of an audit log into an SQLite database.
-# Each audit log entry is loaded as a row into a table named 'audit'.
+# Each audit log entry is inserted as a row into a table named 'audit'.
 #
 # Usage:
 #    hdfs-audit-parser [--db dbFile] audit-log-file
@@ -21,6 +21,19 @@ use DBI;
 my $table_name = "audit";
 my @known_columns = qw(time allowed ugi ip cmd options
                      src dst perm proto);
+
+# A dictionary of parameter count to placeholder strings.
+# e.g. 1 -> "?"
+#      2 -> "?, ?"
+# so we don't have to generate a new one for each insert.
+my %placeholders;
+
+# A dictionary of column strings to prepared statements.
+# There will be a limited number of column combinations in a 
+# given audit log so we cache the prepared statements for each
+# combination.
+#
+my %prepared_statements;
 
 sub usage {
   printf qq(Import an HDFS audit log file into a sqlite database
@@ -58,15 +71,16 @@ sub create_table($) {
 }
 
 # Load each line from the given audit log file as a record.
-sub load_records($;$) {
+sub insert_records($;$) {
   my ($audit, $dbh) = @_[0 .. 1];
   open my $fhandle, "<$audit" or die "Failed to open $audit: $!";
   my $records = 0;
+  printf " >> Importing audit records from $audit\n";
   
   # Parse each line and insert a record into the 'audit' table.
   #
   while (<$fhandle>) {
-    load_record($dbh, $_);
+    insert_record($dbh, $_);
     if (++$records % 1_000_000 == 0) {
       print " >> Imported $records records\n";
     }
@@ -76,34 +90,74 @@ sub load_records($;$) {
   close $fhandle;
 }
 
+# Generate a parameter string of the format "?, ?, ?"
+# Parameter strings are cached.
+#
+sub get_placeholder($) {
+  my $num_parameters = shift;
+  if (!exists $placeholders{$num_parameters}) {
+    $placeholders{$num_parameters} = substr("?, " x $num_parameters, 0, -2);
+  }
+  return $placeholders{$num_parameters};
+}
+
+
+# Return a prepared statement to insert columns, given the
+# a db handle and a sorted list of column names.
+# e.g. "time, allowed, ugi, ip, command"
+#
+sub get_prepared_statement($;$) {
+  my ($dbh, $sorted_keys_ref) = @_[0 .. 2];
+  my @sorted_keys = @{$sorted_keys_ref};
+
+  my $columns = join(', ', @sorted_keys);
+  my $placeholder = get_placeholder(scalar @sorted_keys);
+
+  # Can we use a cached prepared statement?
+  #
+  if (!exists $prepared_statements{$columns}) {
+    # Generate a new parametrized statement and cache it
+    #
+    my $sql = sprintf("INSERT INTO $table_name (%s) VALUES (%s)",
+                  $columns, $placeholder);
+    $prepared_statements{$columns} = $dbh->prepare($sql);
+  }
+  return $prepared_statements{$columns};
+}
+
+
 # Parse a single audit log entry and insert it into the 'audit' table
 # in the given database.
 #
-sub load_record($;$) {
+sub insert_record($;$) {
   my ($dbh, $line) = @_[0 .. 1];
   my @tokens = split /\s+/, $line;   #TODO: Handle file names with spaces.
   my $time = join(" ", splice(@tokens, 0, 2));
   $time =~ s/,.*$//;          # Drop the milliseconds.
-  my @columns = ("time");
-  my @values = ("\"$time\"");
+  my %kv = ();
+  $kv{"time"} = $time;
 
   # Parse each remaining token as a 'key=value' pair.
   #
   foreach my $field (@tokens) {
     # Skip fields not in 'key=value' format or if the column is unknown.
-    # Non-greedy regex match as fields may include '='
+    # Non-greedy regex match as values may include '='
     #
     if ($field =~ m/^(.*?)=(.*)$/ && $1 ~~ @known_columns) {
-      push @columns, $1;
-      push @values, "\"$2\"";
+      $kv{$1} = $2;
     }
   }
 
-  # Insert the record into the table.
+  my @sorted_keys = sort keys %kv;
+  my $sth = get_prepared_statement($dbh, \@sorted_keys);
+  
+  # Perform parameter replacement and insert the record.
   #
-  my $sql = sprintf("INSERT INTO $table_name (%s) VALUES (%s)",
-              join(',', @columns), join(',', @values));
-  $dbh->prepare($sql)->execute();
+  my $i = 0;
+  foreach my $key (sort keys %kv) {
+    $sth->bind_param(++$i, $kv{$key});
+  }
+  $sth->execute();
 }
 
 # Main ------------------------------------------------------------------
@@ -137,7 +191,7 @@ if (! -f $db_file) {
   $dbh = connect_db($db_file);
 }
 
-load_records($audit_log, $dbh);
+insert_records($audit_log, $dbh);
 $dbh->commit;
 $dbh->disconnect;
 
