@@ -62,3 +62,9 @@ The injected blocks will be picked up by the DataNode directory scanner eventual
     There is no blocklength parameter as the block length will be the same as
     the size of the template-block-file.
 
+
+## plot-jmx.py
+Python script to generate a plot of a numeric metric value over time from a series of JSON files. Each JSON file should contain a JMX dump of a Hadoop service. The filename should be the UNIX epoch when the JMX dump was taken.
+
+May be useful in some environments where Grafana has not been setup.
+
