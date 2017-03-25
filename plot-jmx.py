@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
+import getopt
+import glob
+import json
+import sys
 from collections import OrderedDict
 from enum import Enum
 from os.path import basename
-import glob
+
 import matplotlib.pyplot as plt
-import sys
-import getopt
 
 
 # ---------------------------------------------------------------------------
@@ -23,6 +25,7 @@ class Metric:
         self.name = name
         self.values = []
         self.values_for_plot = []
+        self.absolute_epochs_ms = []
         self.metric_type = metric_type
         # Is the metric a sum of two or more.
         self.is_sum = '+' in name
@@ -33,19 +36,31 @@ class Metric:
 #
 def usage_and_die():
         print('''
-        Usage: plot-jmx.py -i <input-files-pattern> [-o output-file.csv]
-                              <metric1:counter> [<metric2:rate>] ...
+    Usage: plot-jmx.py -i <input-files-pattern> [-o output-file.csv]
+                          <metric1:counter> [<metric2:rate>] ...
 
-            Plot one or more metrics over time from multiple JMX files
+        Plot one or more metrics over time from multiple JMX files.
 
-            It is assumed that each file is a single JMX dump and each filename
-            should be the corresponding UNIX epoch.
+        It is assumed that each file is a single JMX dump and each filename
+        should be the corresponding UNIX epoch.
 
-            Each metric must be specified as a name:type, where type is
-            either 'rate' or 'counter'.
+        Each metric must be specified as a beanName:metricName:type, where
+        type is either 'rate' or 'counter'.
 
-            A metric spec can also be specified as 'name1+name2:type' in which
-            case the counts will be summed.
+        A metric spec can also be specified as
+        'beanName1:metricName1+beanName2:metricName2:type' in which case
+        the counts will be summed.
+
+        Examples:
+
+        1. Plot getFileInfo_num_ops vs. elapsed time.
+        plot-jmx.py -i "/inputfiles/*"
+            Hadoop:service=NameNode,name=RpcDetailedActivityForPort8020:getFileInfo_num_ops:counter
+
+        2. Plot sum of port 8020 RPC processing time and RPC queue time vs. elapsed time.
+        plot-jmx.py -i "/inputfiles/*"
+            Hadoop:service=NameNode,name=RpcActivityForPort8020:RpcQueueTime_avg_time+\
+Hadoop:service=NameNode,name=RpcActivityForPort8020:RpcProcessingTime_avg_time:rate
             ''')
         sys.exit()
 
@@ -91,34 +106,34 @@ def parse_metric_specs(spec_strings):
     """
     parsed_metrics = OrderedDict()
     for metric_spec in spec_strings:
-        if ":" not in metric_spec:
-            print("ERROR: Metric must be specified as 'name:type'")
+        if ':' not in metric_spec:
+            print("ERROR: Metric must be specified as 'beanName:metricName:type'")
             sys.exit()
-        name, metric_type = metric_spec.split(":")
+        name, metric_type = metric_spec.rsplit(":", 1)
         parsed_metrics[name] = Metric(name, MetricType[metric_type.upper()])
     return parsed_metrics
 
 
 def get_raw_metrics_from_file(filename):
     """
-    Parse all metrics as 'name : value' pairs from the given file and return
-    a dictionary of the metrics.
+    Parse the given file as JSON and return a dictionary of the
+    given metric names to their values.
 
-    TODO: The file must be parsed as JSON.
+    :param filename: JSON file name.
+    :return: Dictionary of {beanName.metricName->Value}.
     """
-    seen_metrics = {}
+    values = {}
     with open(filename) as mf:
-        lines = mf.readlines()
-    print("Read {} lines from {}".format(len(lines), filename))
-    for line in lines:
         try:
-            if ":" in line:
-                metric_name, metric_val = line.split(":", 1)
-                metric_name = metric_name.strip().replace("\"", "")
-                seen_metrics[metric_name] = float(metric_val.strip().replace(",", ""))
-        except ValueError:
-            continue
-    return seen_metrics
+            j = json.load(mf)
+        except json.decoder.JSONDecodeError:
+            print("WARNING: Failed to decode {} as valid json".format(filename))
+            return values
+
+    for bean in j['beans']:
+        for m in bean.keys():
+            values[bean['name'] + ':' + m] = bean[m]
+    return values
 
 
 def update_metrics_map(metrics_map, raw_metrics):
@@ -140,7 +155,7 @@ def update_metrics_map(metrics_map, raw_metrics):
                 for component in metric.name.split("+"):
                     value += raw_metrics[component]
             metric.values.append(value)
-            print("Saved metric value: {}={}".format(metric.name, value))
+            print("DEBUG: Saved metric value: {}={}".format(metric.name, value))
             return True
     except KeyError:
         # Ignore the file if any metric was missing.
@@ -198,6 +213,9 @@ def parse_metric_vals_and_epochs_from_files(file_glob, metrics_map):
 
 def process_metrics_data(epochs, metrics_map, output_file_name):
     """
+    Convert counter metrics to rates, updating the Metrics.values_for_plot
+    list for each metric with the rates. For rate metrics, this just copies
+    the values as-is.
 
     :param epochs: A list of all the UNIX epochs, one corresponding to each
                    raw metric value.
@@ -211,13 +229,7 @@ def process_metrics_data(epochs, metrics_map, output_file_name):
         f = open(output_file_name, 'w')
         f.write("Seconds Elapsed, {}\n".format(", ".join(metrics_map.keys())))
 
-    # Now process the raw values of the metrics.
-    relative_epochs = [0]
-
     for i, current_epoch in enumerate(epochs):
-        if i > 0:
-            relative_epochs.append(current_epoch - epochs[0])
-
         values_for_csv = []
         for m in metrics_map.values():
             print("Iter={}, Value of {}={}".format(
