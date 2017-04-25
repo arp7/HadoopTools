@@ -14,6 +14,8 @@ use threads::shared;
 use File::Spec;
 use POSIX 'strftime';
 
+# Epoch when the last touchz command succeeded.
+# -1 if touchz has never succeeded.
 my $last_success :shared = -1;
 
 
@@ -22,7 +24,7 @@ sub get_time_for_log {
   return strftime("%Y-%m-%d %H:%M:%S%Z", localtime);
 }
 
-# Periodically sends a write request to HDFS.
+# Periodically send a write request to HDFS, looping forever.
 sub touch_file {
   my $file_name = "/tmp/monitor-nn.safe-to-delete-this-file";
   print get_time_for_log() . " touchz using HDFS file $file_name\n";
@@ -53,8 +55,6 @@ if (! -e $nn_pid_file) {
 # Start the monitoring thread.
 my $thr = threads->create(sub { touch_file() });
 print get_time_for_log() . " Starting jstack loop\n";
-my $hostname = qx(hostname);
-chomp($hostname);
 
 while (1) {
   # Compute the seconds elapsed since the last successful touchz.
@@ -67,10 +67,11 @@ while (1) {
     chomp($nn_pid);
     print get_time_for_log() .
         " Delta=$delta, Threshold=$threshold, issuing \"kill -3 $nn_pid\"\n";
-    my $jstack_output = qx(kill -3 $nn_pid);
+    system("kill", "-3", $nn_pid);
   } else {
     print get_time_for_log() .
         " Delta=$delta, Threshold=$threshold, The NameNode is responsive.\n";
   }
   sleep 10;
 }
+
