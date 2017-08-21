@@ -10,31 +10,33 @@ Agnostic to the target directory layout which can differ across HDP versions.
 """
 
 if (len(sys.argv) != 4):
-  print("Usage: replace-jars.pl <source-dir> <source-version> <dst-version>")
+  print("Usage: replace-jars.py <source-dir> <source-version> <dst-version>")
   print("       source-dir     : Directory containing the new jar versions.")
   print("       source-version : Version string of the new jars.")
   print("       dst-version    : Installed HDP version to be updated.")
   sys.exit(1)
 
 
+src, src_ver, dst_ver = sys.argv[1:]
+
+# Canonicalize and validate the source directory exists.
+#
+src = os.path.realpath(src)
+if not os.path.isdir(src):
+  print("Source directory {} does not exist".format(src))
+  sys.exit(1)
+
 # Strip out the first three digits which are the Apache version
 # from dst_ver.
 #
-src, src_ver, dst_ver = sys.argv[1:]
 ver_pattern = re.compile('^\d+\.\d+\.\d+\.')
-dst = "/usr/hdp/" + re.sub(ver_pattern, "", dst_ver)
+dst = os.path.join("/usr", "hdp", re.sub(ver_pattern, "", dst_ver))
 
-# Sanity checks.
-#
 if not os.path.isdir(dst):
-  print("Directory {} does not exist".format(dst))
+  print("HDP directory {} does not exist. Is HDP version {} installed?".format(dst, dst_ver))
   sys.exit(1)
 
-if not os.path.isdir(src):
-  print("Directory {} does not exist".format(src))
-  sys.exit(1)
-
-# Build a map of source jar name to its full path under
+# Build a map of source jar name to its full absolute path under
 # the source directory.
 #
 sources = {}
