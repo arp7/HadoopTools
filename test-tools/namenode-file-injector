@@ -31,16 +31,16 @@ Usage:
 }
 
 sub get_hadoop_command() {
-  return File::Spec->catfile($ENV{'HADOOP_PREFIX'}, "bin", "hadoop");
+  return File::Spec->catfile($ENV{'HADOOP_HOME'}, "bin", "hadoop");
 }
 
 sub get_hdfs_command() {
-  return File::Spec->catfile($ENV{'HADOOP_PREFIX'}, "bin", "hdfs");
+  return File::Spec->catfile($ENV{'HADOOP_HOME'}, "bin", "hdfs");
 }
 
 sub get_daemon_command() {
   return File::Spec->catfile(
-      $ENV{'HADOOP_PREFIX'}, "sbin", "hadoop-daemon.sh");
+      $ENV{'HADOOP_HOME'}, "sbin", "hadoop-daemon.sh");
 }
 
 sub get_meta_dir() {
@@ -118,8 +118,8 @@ sub copy_edit_logs($) {
 
 # -----Execution begins here-----------------------------------------------------
 
-if (!defined $ENV{'HADOOP_PREFIX'} || !defined $ENV{'HADOOP_CONF_DIR'}) {
-  die "HADOOP_PREFIX and HADOOP_CONF_DIR must be defined";
+if (!defined $ENV{'HADOOP_HOME'} || !defined $ENV{'HADOOP_CONF_DIR'}) {
+  die "HADOOP_HOME and HADOOP_CONF_DIR must be defined";
 }
 
 my $num_files;

@@ -7,15 +7,26 @@ The injected blocks will be picked up by the DataNode directory scanner eventual
 
 ## Usage
 
-    datanode-block-injector --bpid <bpid> --numblocks <num-blocks>
-        --startblockid <starting-block-id> --storagedirs <dir1;dir2;...;dirN>
-        --blockfile <template-block-file> --metafile <template-meta-file>
-        [--genstamp <genstamp>]
+```
+datanode-block-injector --bpid <bpid> --numblocks <num-blocks>
+    --startblockid <starting-block-id> --blockfile <template-block-file>
+    --metafile <template-meta-file> [--genstamp <genstamp>]
+```
+The default genstamp is 1000. All other parameters are required.
 
-    The default genstamp is 1000. All other parameters are required.
-
-    Template block and meta files can be generated from an existing cluster.
-    There is no blocklength parameter as the block length will be the same as
-    the size of the template-block-file.
+Template block and meta files can be generated from an existing cluster. There is no blocklength parameter as the block length will be the same as the size of the template-block-file.
 
 
+## namenode-file-injector
+Perl script that can inject files into an HDFS namespace. It is a wrapper over the [CreateEdits](https://github.com/apache/hadoop/blob/trunk/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/CreateEditsLog.java).
+
+This tool can be used along with the datanode-block-injector to quickly bring up a cluster with millions of files.
+
+The NameNode must be shut down while this tool is being run and then restarted.
+
+## Usage
+
+```
+namenode-file-injector --numfiles <num-files> --blocksperfile=<blocks-per-file>
+    --startblockid <starting-block-id> --blocklength=<block-length>
+```
