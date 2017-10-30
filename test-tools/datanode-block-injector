@@ -13,6 +13,7 @@ use File::Path qw(make_path);
 use File::Spec qw(catfile);
 use Getopt::Long 2.32;
 use Pod::Usage;
+use URI::URL;
 
 # Functions -------------------------------------------------------------
 
@@ -33,6 +34,30 @@ Usage:
   exit(1);
 }
 
+# Return the datanode storage directories from HDFS configuration.
+#
+sub get_datanode_dirs() {
+  my $value = qx("$ENV{'HADOOP_HOME'}/bin/hdfs" getconf -confKey dfs.datanode.data.dir 2>/dev/null);
+  my @raw_dirs = split(/,/, $value);
+  my @dirs;
+  foreach my $raw_dir (@raw_dirs) {
+    # Remove the storage type.
+    $raw_dir =~ s/^\[[a-zA-Z_]+\]//;
+
+    # Convert the URI to a local dir.
+    my $url = URI::URL->new($raw_dir);
+    my @components = $url->crack();
+
+    # If there is a scheme, it must be 'file'
+    if (defined $components[0] && $components[0] ne "file" &&
+        $components[0] ne "") {
+      die "Bad scheme $components[0] for URI $raw_dir, expected 'file'";
+    }
+    push(@dirs, $components[5]);
+  }
+  return @dirs;
+}
+
 # Ensure that each storage dir is initialized and its layout version is
 # as expected.
 # VERSION file parsing snippet copied from http://stackoverflow.com/a/11844903
@@ -47,7 +72,7 @@ sub verify_storage_dirs($;$) {
     print " >> Reading VERSION file $version_file\n";
     my %kvs = map { split /=|\s+/; } <$fh>;
     close $fh;
-    (exists $kvs{"layoutVersion"} && $kvs{"layoutVersion"} eq "-56") or
+    (exists $kvs{"layoutVersion"} && $kvs{"layoutVersion"} <= "-56") or
         die " >> Layout version not found in $version_file or incorrect.\n";
   }
 }
@@ -112,13 +137,18 @@ GetOptions('bpid=s' => \$bpid,
            'blockfile=s' => \$blockfile,
            'metafile=s' => \$metafile);
 
-if (!defined($bpid) || !defined($num_blocks) || !defined($storage_dirs) ||
-    !defined($blockfile) || !defined($metafile) || !defined($start_blockid)) {
+if (!defined($bpid) || !defined($num_blocks) || !defined($blockfile) ||
+    !defined($metafile) || !defined($start_blockid)) {
   usage();
 }
 
-my @storages = split(';', $storage_dirs);
-my $blocks_per_storage = $num_blocks / (scalar @storages);
+if (!defined $ENV{'HADOOP_HOME'}) {
+  die "HADOOP_HOME must be defined";
+}
+
+my @storages = get_datanode_dirs();
+my $blocks_per_storage = int($num_blocks / (scalar @storages));
+print("blocks_per_storage=$blocks_per_storage\n");
 
 verify_storage_dirs(\@storages, $bpid);
 foreach (@storages) {
