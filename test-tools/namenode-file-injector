@@ -22,8 +22,10 @@ Usage:
   namenode-file-injector --numfiles <num-files> --blocksperfile=<blocks-per-file>
       --startblockid <starting-block-id> --blocklength=<block-length>
 
+  numfiles is required. All other parameters are optional.
+
   Default blocksperfile is 1.
-  Default startblockid is 1.
+  Default startblockid is 1000000.
   Default blocklength is 10 bytes.
 
 );
@@ -124,7 +126,7 @@ if (!defined $ENV{'HADOOP_HOME'} || !defined $ENV{'HADOOP_CONF_DIR'}) {
 
 my $num_files;
 my $blocks_per_file = 1;
-my $start_blockid = 1;
+my $start_blockid = 1_000_000;
 my $block_length = 10;
 
 GetOptions('numfiles=i' => \$num_files,

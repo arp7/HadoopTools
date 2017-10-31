@@ -21,11 +21,12 @@ sub usage() {
   print qq(
 Usage:
   datanode-block-injector --bpid <bpid> --numblocks <num-blocks>
-      --startblockid <starting-block-id> --storagedirs <dir1;dir2;...;dirN>
       --block <template-block-file> --meta <template-meta-file>
-      [--genstamp <genstamp>]
+      [--startblockid <starting-block-id>] [--genstamp <genstamp>]
 
-  The default genstamp is 1000. All other parameters are required.
+  The default startblockid is 1000000. The default genstamp is 1000.
+
+  All other parameters are required.
 
   Template block and meta files can be generated from an existing cluster.
   There is no blocklength parameter as the block length will be the same as
@@ -146,7 +147,7 @@ sub mymain() {
   my $storage_dirs;
   my $block_template;
   my $meta_template;
-  my $start_blockid;
+  my $start_blockid = 1_000_000;
   my $layout_mask;
 
   GetOptions('bpid=s' => \$bpid,
@@ -158,7 +159,7 @@ sub mymain() {
              'meta=s' => \$meta_template);
 
   if (!defined($bpid) || !defined($num_blocks) || !defined($block_template) ||
-      !defined($meta_template) || !defined($start_blockid)) {
+      !defined($meta_template)) {
     usage();
   }
 
