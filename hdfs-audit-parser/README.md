@@ -1,6 +1,8 @@
 # hdfs-audit-parser
 Perl script that accepts a path to an HDFS audit log file and creates an [SQLite](https://www.sqlite.org/) database file with a single table named `audit`. Each audit log line is parsed as a set of key-value pairs with the keys as columns in the `audit` table.
 
+Makes use of Perl's [DBD::SQLite module](http://search.cpan.org/~msergeant/DBD-SQLite-0.31/lib/DBD/SQLite.pm) and the Perl [DBI module](http://search.cpan.org/~timb/DBI-1.634/DBI.pm).
+
 ## Usage
     hdfs-audit-parser [--db dbFile] audit-log-file
 
@@ -46,4 +48,3 @@ If dbFile is specified then records are loaded into the existing database file. 
     $ sqlite3 /tmp/audit-4662259.db "select count(*) from audit where cmd in ('append', 'create', 'delete', 'mkdirs', 'rename', 'setOwner', 'setPermission', 'setReplication', 'setTimes')"
     121348
 
-Makes use of Perl's [DBD::SQLite module](http://search.cpan.org/~msergeant/DBD-SQLite-0.31/lib/DBD/SQLite.pm) and the Perl [DBI module](http://search.cpan.org/~timb/DBI-1.634/DBI.pm).
