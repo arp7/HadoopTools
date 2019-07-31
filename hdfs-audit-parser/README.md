@@ -3,6 +3,13 @@ Perl script that accepts a path to an HDFS audit log file and creates an [SQLite
 
 Makes use of Perl's [DBD::SQLite module](http://search.cpan.org/~msergeant/DBD-SQLite-0.31/lib/DBD/SQLite.pm) and the Perl [DBI module](http://search.cpan.org/~timb/DBI-1.634/DBI.pm).
 
+## Installing required modules
+I have tested this on CentOS 7, use relevant comments for your OS.    
+    `yum install perl perl-Data-Dumper`   
+    `yum install gcc`    
+    `perl -MCPAN -e 'install DBI'`   
+    
+    
 ## Usage
     hdfs-audit-parser [--db dbFile] audit-log-file
 
