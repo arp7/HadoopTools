@@ -12,8 +12,8 @@
 
 use strict;
 use warnings;
-no warnings 'experimental'; # For smartmatch.
-
+#no warnings 'experimental'; # For smartmatch.
+no if ($] >= 5.018), 'warnings' => 'experimental';
 use DBI;
 
 # Functions -------------------------------------------------------------
